@@ -1,0 +1,9 @@
+@openzeppelin/=node_modules/@openzeppelin/
+@chainlink/=node_modules/@chainlink/
+@chainlink/contracts-ccip/=node_modules/@chainlink/contracts-ccip/
+@prb/=node_modules/@prb/
+@uniswap/v3-core/=node_modules/@uniswap/v3-core/
+@uniswap/v3-periphery/=node_modules/@uniswap/v3-periphery/
+interfaces/=contracts/interfaces/
+forge-std/=lib/forge-std/src/
+ds-test/=lib/forge-std/lib/ds-test/src/ 

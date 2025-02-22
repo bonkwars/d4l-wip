@@ -1,0 +1,124 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 Degen4Life
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "../interfaces/IAntiRugPull.sol";
+
+abstract contract AbstractAntiRugPull is Ownable, IAntiRugPull {
+    struct LockedLiquidity {
+        uint256 amount;
+        uint256 unlockTime;
+    }
+
+    LockConfig private _lockConfig;
+    LockedLiquidity private _lockedLiquidity;
+    bool private _ownershipRenounced;
+    
+    // Token and LP token addresses
+    address public immutable token;
+    address public immutable lpToken;
+
+    constructor(
+        address _token,
+        address _lpToken,
+        LockConfig memory initialConfig
+    ) Ownable(msg.sender) {
+        require(_token != address(0), "Invalid token address");
+        require(_lpToken != address(0), "Invalid LP token address");
+        require(_validateLockConfig(initialConfig), "Invalid lock configuration");
+
+        token = _token;
+        lpToken = _lpToken;
+        _lockConfig = initialConfig;
+    }
+
+    /// @notice Locks liquidity for a specified duration
+    function lockLiquidity(uint256 amount, uint256 duration) external override onlyOwner {
+        require(amount > 0, "Amount must be positive");
+        require(duration >= _lockConfig.lockDuration, "Duration too short");
+        
+        // Transfer LP tokens to this contract
+        require(
+            IERC20(lpToken).transferFrom(msg.sender, address(this), amount),
+            "LP token transfer failed"
+        );
+
+        _lockedLiquidity.amount = amount;
+        _lockedLiquidity.unlockTime = block.timestamp + duration;
+
+        emit LiquidityLocked(amount, _lockedLiquidity.unlockTime);
+    }
+
+    /// @notice Renounces ownership of the contract
+    function renounceOwnership() public override(Ownable, IAntiRugPull) onlyOwner {
+        _ownershipRenounced = true;
+        _lockConfig.ownershipRenounced = true;
+        emit OwnershipRenounced(owner());
+        super.renounceOwnership();
+    }
+
+    /// @notice Updates the lock configuration
+    function updateLockConfig(LockConfig calldata config) external override onlyOwner {
+        require(!_ownershipRenounced, "Ownership renounced");
+        require(_validateLockConfig(config), "Invalid configuration");
+        
+        _lockConfig = config;
+        emit LockConfigUpdated(config);
+    }
+
+    /// @notice Checks if a sell transaction would violate anti-rug rules
+    function canSell(address seller, uint256 amount) external view override returns (bool allowed, string memory reason) {
+        // Check if liquidity is locked
+        if (_lockedLiquidity.amount == 0) {
+            return (false, "No liquidity locked");
+        }
+
+        // Check if lock period is still active
+        if (block.timestamp < _lockedLiquidity.unlockTime) {
+            // Check if sell amount exceeds maximum allowed
+            uint256 maxSell = (IERC20(token).totalSupply() * _lockConfig.maxSellPercentage) / 100;
+            if (amount > maxSell) {
+                return (false, "Sell amount exceeds maximum");
+            }
+
+            // Check minimum liquidity requirement
+            uint256 minLiquidity = (IERC20(token).totalSupply() * _lockConfig.minLiquidityPercentage) / 100;
+            if (_lockedLiquidity.amount < minLiquidity) {
+                return (false, "Insufficient liquidity locked");
+            }
+        }
+
+        return (true, "");
+    }
+
+    /// @notice Gets the current lock configuration
+    function getLockConfig() external view override returns (LockConfig memory) {
+        return _lockConfig;
+    }
+
+    /// @notice Gets the amount of locked liquidity
+    function getLockedLiquidity() external view override returns (uint256 amount, uint256 unlockTime) {
+        return (_lockedLiquidity.amount, _lockedLiquidity.unlockTime);
+    }
+
+    /// @notice Checks if the contract has renounced ownership
+    function isOwnershipRenounced() external view override returns (bool) {
+        return _ownershipRenounced;
+    }
+
+    /// @notice Gets the maximum allowed sell amount
+    function getMaxSellAmount() external view override returns (uint256) {
+        return (IERC20(token).totalSupply() * _lockConfig.maxSellPercentage) / 100;
+    }
+
+    /// @notice Internal function to validate lock configuration
+    function _validateLockConfig(LockConfig memory config) internal pure returns (bool) {
+        return config.lockDuration > 0 &&
+               config.minLiquidityPercentage > 0 &&
+               config.minLiquidityPercentage <= 100 &&
+               config.maxSellPercentage > 0 &&
+               config.maxSellPercentage <= 100;
+    }
+} 

@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/security/Pausable.sol";
+import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/security/PullPayment.sol";
+
+contract SecurityManager is ReentrancyGuard, Pausable, AccessControl, PullPayment {
+    bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    bytes32 public constant GUARDIAN_ROLE = keccak256("GUARDIAN_ROLE");
+
+    // Rate limiting
+    mapping(address => uint256) public lastActionTimestamp;
+    mapping(bytes32 => uint256) public actionTimeouts;
+    
+    // Transaction limits
+    mapping(address => uint256) public dailyLimits;
+    mapping(address => uint256) public dailyUsage;
+    mapping(address => uint256) public lastResetTime;
+
+    // Circuit breaker
+    uint256 public constant CIRCUIT_BREAKER_THRESHOLD = 10;
+    uint256 public failedTransactions;
+    bool public circuitBroken;
+
+    // Events
+    event RateLimitExceeded(address indexed user, bytes32 indexed action);
+    event DailyLimitExceeded(address indexed user, uint256 amount);
+    event CircuitBroken(uint256 failedTransactions);
+    event SecurityAlert(bytes32 indexed alertType, bytes details);
+    event ActionTimeoutUpdated(bytes32 indexed action, uint256 timeout);
+
+    constructor() {
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(GUARDIAN_ROLE, msg.sender);
+    }
+
+    modifier checkRateLimit(bytes32 action) {
+        require(
+            block.timestamp >= lastActionTimestamp[msg.sender] + actionTimeouts[action],
+            "Rate limit exceeded"
+        );
+        lastActionTimestamp[msg.sender] = block.timestamp;
+        _;
+    }
+
+    modifier checkDailyLimit(uint256 amount) {
+        _resetDailyLimitIfNeeded(msg.sender);
+        require(
+            dailyUsage[msg.sender] + amount <= dailyLimits[msg.sender],
+            "Daily limit exceeded"
+        );
+        dailyUsage[msg.sender] += amount;
+        _;
+    }
+
+    modifier circuitBreakerCheck() {
+        require(!circuitBroken, "Circuit breaker active");
+        _;
+        if (failedTransactions >= CIRCUIT_BREAKER_THRESHOLD) {
+            circuitBroken = true;
+            emit CircuitBroken(failedTransactions);
+        }
+    }
+
+    function setActionTimeout(
+        bytes32 action,
+        uint256 timeout
+    ) external onlyRole(OPERATOR_ROLE) {
+        actionTimeouts[action] = timeout;
+        emit ActionTimeoutUpdated(action, timeout);
+    }
+
+    function setDailyLimit(
+        address user,
+        uint256 limit
+    ) external onlyRole(OPERATOR_ROLE) {
+        dailyLimits[user] = limit;
+    }
+
+    function resetCircuitBreaker() external onlyRole(GUARDIAN_ROLE) {
+        circuitBroken = false;
+        failedTransactions = 0;
+    }
+
+    function recordFailedTransaction() external onlyRole(OPERATOR_ROLE) {
+        failedTransactions++;
+    }
+
+    function pause() external onlyRole(GUARDIAN_ROLE) {
+        _pause();
+    }
+
+    function unpause() external onlyRole(GUARDIAN_ROLE) {
+        _unpause();
+    }
+
+    function _resetDailyLimitIfNeeded(address user) internal {
+        if (block.timestamp >= lastResetTime[user] + 1 days) {
+            dailyUsage[user] = 0;
+            lastResetTime[user] = block.timestamp;
+        }
+    }
+
+    function emitSecurityAlert(
+        bytes32 alertType,
+        bytes memory details
+    ) external onlyRole(OPERATOR_ROLE) {
+        emit SecurityAlert(alertType, details);
+    }
+} 

@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025 Degen4Life
+pragma solidity ^0.8.20;
+
+import "../../interfaces/IChainlinkOracle.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract MockChainlinkOracle is IChainlinkOracle, Ownable {
+    mapping(address => address) private _priceFeeds;
+    mapping(address => uint256) private _mockPrices;
+    mapping(address => uint256) private _mockTimestamps;
+
+    constructor() Ownable(msg.sender) {}
+
+    function getLatestPrice(address token) external view override returns (uint256 price, uint256 updatedAt) {
+        require(_priceFeeds[token] != address(0), "Price feed not found");
+        return (_mockPrices[token], _mockTimestamps[token]);
+    }
+
+    function getPriceFeed(address token) external view override returns (address) {
+        return _priceFeeds[token];
+    }
+
+    function setPriceFeed(address token, address priceFeed) external override onlyOwner {
+        require(token != address(0), "Invalid token");
+        require(priceFeed != address(0), "Invalid price feed");
+        _priceFeeds[token] = priceFeed;
+        emit PriceFeedSet(token, priceFeed);
+    }
+
+    function hasPriceFeed(address token) external view override returns (bool) {
+        return _priceFeeds[token] != address(0);
+    }
+
+    // Mock-specific functions
+    function setMockPrice(address token, uint256 price) external onlyOwner {
+        require(_priceFeeds[token] != address(0), "Price feed not set");
+        _mockPrices[token] = price;
+        _mockTimestamps[token] = block.timestamp;
+    }
+
+    function setMockTimestamp(address token, uint256 timestamp) external onlyOwner {
+        require(_priceFeeds[token] != address(0), "Price feed not set");
+        _mockTimestamps[token] = timestamp;
+    }
+} 
